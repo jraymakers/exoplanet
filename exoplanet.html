@@ -5,6 +5,13 @@
 body {
   background-color: white;
 }
+#container {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
 #canvas {
   position: absolute;
   top: 0;
@@ -16,7 +23,7 @@ body {
 </style>
 </head>
 <body>
-<canvas id="canvas" width="960px" height="640px"></canvas>
+<div id="container"><canvas id="canvas" width="960px" height="640px"></canvas></div>
 <script>
 
 // shared
@@ -189,83 +196,151 @@ function octaveNoise(noise, octaves, gain, frequency, lacunarity, x, y) {
   return total / maxAmplitude;
 }
 
-function generateNoise(width, height, options, callback) {
+function generateNoise(minX, minY, width, height, options, callback) {
   var opts = options || {};
   var octaves = opts.octaves || 1;
   var gain = opts.gain || 0.5;
   var frequency = opts.frequency || 1/256;
   var lacunarity = opts.lacunarity || 2.0;
-  var offsetX = opts.offsetX || 0;
-  var offsetY = opts.offsetY || 0;
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      callback(x, y, octaveNoise(simplexNoise, octaves, gain, frequency, lacunarity, x + offsetX, y + offsetY));
+  for (var y = minY, maxY = minY + height; y < maxY; y++) {
+    for (var x = minX, maxX = minX + width; x < maxX; x++) {
+      callback(x, y, octaveNoise(simplexNoise, octaves, gain, frequency, lacunarity, x, y));
     }
   }
 }
 
-function render(ctx, imageData, options) {
+// ---
+
+var container = document.getElementById('container');
+var canvas = document.getElementById('canvas');
+var ctx = canvas.getContext('2d');
+
+var options = {
+  octaves: 8,
+  gain: 0.55,
+  frequency: 1/750,
+  lacunarity: 1.8715
+};
+var seaLevel = 0-.1;
+var TileSize = 256;
+var tiles = {};
+var viewportRect = { x: 0, y: 0, w: 0, h: 0 };
+
+function setPixel(data, p, r, g, b, a) {
+  data[p  ] = r;
+  data[p+1] = g;
+  data[p+2] = b;
+  data[p+3] = a;
+}
+
+function createTile(i, j) {
+  var imageData = ctx.createImageData(TileSize, TileSize);
   var data = imageData.data;
   var width = imageData.width;
-  var height = imageData.height
-  generateNoise(width, height, options,
+  var height = imageData.height;
+  var minX = i * TileSize;
+  var minY = j * TileSize;
+  generateNoise(minX, minY, width, height, options,
     function (x, y, noise) {
-      var n = (0.5 + 0.5 * noise) * 255;
-      var p = 4 * (y * width + x);
-      data[p  ] = n * 0.7;
-      data[p+1] = n * 0.5;
-      data[p+2] = n * 0.2;
-      data[p+3] = 255;
+      var p = 4 * ((y-minY) * width + (x-minX));
+      if (noise < seaLevel) {
+        var depth = seaLevel - noise;
+        setPixel(data, p, 0, 50-depth*50, 200-depth*150, 255);
+      } else {
+        var alt = noise - seaLevel;
+        setPixel(data, p, alt*30, 120-alt*90, alt*30, 255);
+      }
     });
-  ctx.putImageData(imageData, 0, 0);
+  return { imageData: imageData };
+}
+
+function getTile(i, j) {
+  var tileKey = 'tile_' + i + '_' + j;
+  var tile = tiles[tileKey];
+  if (!tile) {
+    tile = createTile(i, j);
+    tiles[tileKey] = tile;
+  }
+  return tile;
+}
+
+function render() {
+  var x = viewportRect.x;
+  var y = viewportRect.y;
+  var w = viewportRect.w;
+  var h = viewportRect.h;
+
+  var imin = fastfloor(x/TileSize);
+  var jmin = fastfloor(y/TileSize);
+  var imax = fastfloor((x+w)/TileSize);
+  var jmax = fastfloor((y+h)/TileSize);
+
+  for (var i = imin; i <= imax; i++) {
+    for(var j = jmin; j <= jmax; j++) {
+      var tile = getTile(i, j);
+      ctx.putImageData(tile.imageData, i * TileSize - x, j * TileSize - y);
+    }
+  }
+
   ctx.fillStyle = 'white';
   ctx.fillText(
-    '(' + options.offsetX + ',' + options.offsetY + ')' +
-    ' f: ' + options.frequency + ' g: ' + options.gain,
+    '('+x+','+y+','+w+','+h+')'+
+    ' f='+options.frequency+' g='+options.gain+
+    ' l='+options.lacunarity+' o='+options.octaves+
+    ' s='+seaLevel,
     10, 20);
 }
 
-var canvas = document.getElementById('canvas');
-var W = canvas.width;
-var H = canvas.height;
-var ctx = canvas.getContext('2d');
+function updateCanvasSize() {
+  viewportRect.w = canvas.width = container.clientWidth;
+  viewportRect.h = canvas.height = container.clientHeight;
+  render();
+}
 
-var imageData = ctx.createImageData(W, H);
-
-var options = {
-  octaves: 4,
-  gain: 0.55,
-  frequency: 1/320,
-  lacunarity: 1.8715,
-  offsetX: 0,
-  offsetY: 0
-};
-render(ctx, imageData, options);
+updateCanvasSize();
+window.onresize = updateCanvasSize;
 
 window.onkeydown = function (event) {
   switch (event.keyCode) {
     case 37: // left arrow
-      options.offsetX -= 100;
+      viewportRect.x -= 100;
       break;
     case 38: // up arrow
-      options.offsetY -= 100;
+      viewportRect.y -= 100;
       break;
     case 39: // right arrow
-      options.offsetX += 100;
+      viewportRect.x += 100;
       break;
     case 40: // down arrow
-      options.offsetY += 100;
+      viewportRect.y += 100;
       break;
     case 70: // f
-      options.frequency *= event.shiftKey ? 0.9 : 1.1;
+      options.frequency *= event.shiftKey ? 0.99 : 1.01;
+      tiles = {};
       break;
     case 71: // g
-      options.gain *= event.shiftKey ? 0.9 : 1.1;
+      options.gain *= event.shiftKey ? 0.99 : 1.01;
+      tiles = {};
+      break;
+    case 76: // l
+      options.lacunarity *= event.shiftKey ? 0.99 : 1.01;
+      tiles = {};
+      break;
+    case 79: // o
+      options.octaves += event.shiftKey ? -1 : 1;
+      if (options.octaves < 1) options.octaves = 1;
+      tiles = {};
+      break;
+    case 83: // s
+      seaLevel += event.shiftKey ? -0.05 : 0.05;
+      if (seaLevel < -1) seaLevel = 1;
+      if (seaLevel > 1) seaLevel = 1;
+      tiles = {};
       break;
     default:
       console.log(event.keyCode);
   }
-  render(ctx, imageData, options);
+  render();
 };
 
 </script>
